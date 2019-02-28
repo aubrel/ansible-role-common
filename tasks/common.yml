@@ -6,3 +6,32 @@
 
 - name: Include OS-specific tasks.
   include_tasks: "common-{{ ansible_os_family | default('Debian') | lower }}.yml"
+
+- name: Enable disk quotas.
+  when: enable_root_fs_quota
+  block:
+    - name: Install quota tools.
+      package:
+        name: quota
+
+    - name: Add quota mount options for root filesystem.
+      register: edit_fstab
+      lineinfile:
+        path: /etc/fstab
+        backup: true
+        regexp: '(^[^#][\w=_-]+[ \t]+/[ \t]+[a-zA-Z0-9_]+[ \t]+)((?!usrjquota=aquota.user,)(?!jqfmt=vfsv1)[\w=_,\.-]+)([ \t]+[0-9]+[ \t]+[0-9]+)'
+        backrefs: true
+        line: '\1usrjquota=aquota.user,jqfmt=vfsv1,\2\3'
+        # TODO: What's a good way to run a validation command on this?
+        #validate: "mount --fake --verbose --no-mtab --all # %s"
+      notify: reboot
+
+    - name: Remount root filesystem.
+      when: edit_fstab is changed
+      command: "mount -o remount /"
+
+    - name: Create disk quota indexes.
+      when: edit_fstab is changed
+      command: "quotacheck --user --create-files --no-remount --verbose /"
+      args:
+        creates: /aquota.user
